@@ -52,10 +52,6 @@ class DictList(MutableMapping):
 
         self.shape = (self.length, )
 
-    # TODO: jax.jitify?
-    def compute_returns(self, gamma: float = 0.99) -> None:
-        pass
-
     def __setitem__(self, __k, __v) -> None:
         '''
         If obs is a field in the buffer whose values are 64x64 arrays, you can do this:
@@ -94,6 +90,15 @@ class DictList(MutableMapping):
 
     def __len__(self) -> int:
         return self.length
+
+    @staticmethod
+    def extend(dl1, dl2):
+        '''
+        TODO:
+        Take in two DictLists with similar keys and append their data together to create a new DictList
+        Useful for aggregating multiple parallel rollout workers
+        '''
+        pass
 
 
 # Uncomment this to see an illustrative example
