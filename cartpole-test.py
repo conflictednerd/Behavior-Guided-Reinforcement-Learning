@@ -6,6 +6,7 @@ import jax.random as random
 import numpy as np
 import optax
 
+import data.collector as collector
 from data.storage import DictList
 from hyperparams import get_args
 from networks import MLPActor
@@ -15,8 +16,6 @@ This file serve as a test bed for sanity checking my implementations with the ca
 Currently, I am using an off-policy version of the REINFORCE algorithm modified so that it can use replay buffers and batch updates.
 
 TODO: Code cleanup
-    TODO: actor net and optimizers must be defined in networks.py
-    TODO: rollout worker (fill_buffer) must be in environment directory
     TODO: rl policy gradient loss (actor_loss) must be defined in rl.py
     TODO: [Advance] fill_buffer should be jit-able so that we can use vmap, pmap to to collect trajectories using multiple workers
 TODO: Proper evaluation (along with video of sample runs) in a separate env should be implemented.
@@ -62,8 +61,13 @@ def train(rng):
 
     for epoch in range(args.epochs):
         rng, buffer_rng, learn_rng = random.split(rng, 3)
+
         print('Collecting samples...')
-        buffer = fill_buffer(envs, actor_params, actor, buffer_rng)
+        buffer, next_done = collector.collect_rollouts(
+            envs, (actor_params, actor), args, buffer_rng)
+        buffer = collector.compute_returns(buffer, next_done, args)
+        buffer.flatten()
+
         print('Optimizing...')
         actor_params, optimizer_state, stats = learn(
             buffer, actor, actor_params, optimizer, optimizer_state, learn_rng)
@@ -73,75 +77,27 @@ def train(rng):
         del buffer
 
 
-def fill_buffer(envs, actor_params, actor, rng):
-    '''
-    run the vectorized env for n steps and put the experiences in the buffer
-    return the flattened buffer
-    '''
-    buffer = DictList((args.num_steps, args.num_envs), info={
-        'obs': envs.single_observation_space.shape,
-        'act': envs.single_action_space.shape,
-        'rew': 1,
-        'next_obs': envs.single_observation_space.shape,
-        'done': 1,
-        'returns': 1,
-        'adv': 1,
-        # log probability of the selected action. Used to compute importance weights for off-policy updates.
-        'logp': 1,
-    })
-
-    next_obs = envs.reset()
-    next_done = np.zeros((args.num_envs,))
-    for t in range(args.num_steps):
-        rng, actor_rng, sample_rng = random.split(rng, 3)
-        action_dists = actor.apply(
-            params=actor_params, x=next_obs, rng=actor_rng)
-        # Todo: modify actor networks to return a distribution object instead of logits
-        actions = np.array(action_dists.sample(sample_rng))
-        buffer[t] = {'obs': next_obs, 'act': actions, 'done': next_done,
-                     'logp': action_dists.log_prob(actions)}
-        next_obs, reward, done, info = envs.step(actions)
-        buffer[t] = {'rew': reward, 'next_obs': next_obs}
-
-        next_obs, next_done = np.array(next_obs), np.array(done)
-
-    # compute reward2gos
-    assert len(buffer.shape) == 2
-    for t in reversed(range(args.num_steps)):
-        if t == args.num_steps-1:
-            next_nonterminal = 1-next_done
-            next_return = np.zeros(args.num_envs)  # critic(next_obs)
-        else:
-            next_nonterminal = 1 - buffer[t+1]['done']
-            next_return = buffer[t+1]['returns']
-        buffer[t] = {'returns': buffer[t]['rew'] +
-                     args.gamma*next_nonterminal*next_return}
-
-    # adv = returns - values
-    # ! Caution: buffer[:]['adv'] will not update in place
-    buffer['adv'][:] = buffer['returns'][:]
-
-    buffer.flatten()
-    return buffer
-
-
-def policy_loss(actor_params, actor, mini_batch, rng):
+def policy_loss(actor_params, actor, mini_batch, rng, use_importance_weights=False):
     '''
     function that computes the policy loss given a mini-batch
     will call grad on it to get the gradients
 
-    Vanilla policy gradient loss with importance sampling.
-    # ! Important theoretical caveat: In actuality, the importance ratio (new_log_p/old_logp) must be computed over the entire trajectory, and not just for a single time-step.
-    # ! However, when the behavior policy is not "far from" the policy to be updated, we can use a first order approximate of the full importance ratio.
-    # ! For more details, checkout this https://youtu.be/KZd508qGFt0
+    Vanilla policy gradient loss (REINFORCE) with importance sampling.
+    Important theoretical caveat: In actuality, the importance ratio (new_log_p/old_logp) must be computed over the entire trajectory, and not just for a single time-step.
+    However, when the behavior policy is not "far from" the policy to be updated, we can use a first order approximate of the full importance ratio.
+    importance weights for off-policy updates should not be involved in the gradient computation.
+    For more details, checkout this https://youtu.be/KZd508qGFt0
     '''
-    obs, act, adv, old_logp = mini_batch['obs'], mini_batch['act'], mini_batch['adv'], mini_batch['logp']
+    obs, act, adv = mini_batch['obs'], mini_batch['act'], mini_batch['adv']
+    if use_importance_weights:
+        old_logp = mini_batch['logp']
     rng, actor_rng = random.split(rng)
     log_probs = actor.apply(params=actor_params, x=obs,
                             rng=actor_rng).log_prob(act.astype(int))
-    # ! importance weights for off-policy updates should not be involved in the gradient computation.
-    loss = - (log_probs * jax.lax.stop_gradient(adv *
-              log_probs / old_logp)).mean()
+    # !
+    loss = - (log_probs * jax.lax.stop_gradient(adv * log_probs / old_logp
+                                                if use_importance_weights else adv)
+              ).mean()
     return loss
 
 
