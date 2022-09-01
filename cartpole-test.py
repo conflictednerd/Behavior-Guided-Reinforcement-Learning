@@ -5,10 +5,10 @@ import jax.numpy as jnp
 import jax.random as random
 import numpy as np
 import optax
-from numpyro.distributions.discrete import Categorical
 
 from data.storage import DictList
 from hyperparams import get_args
+from networks import MLPActor
 
 """
 This file serve as a test bed for sanity checking my implementations with the cartpole environment.
@@ -26,6 +26,7 @@ TODO: Add a critic network and use it to add a baseline to the RL objective
 """
 
 args = get_args()
+
 
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
@@ -48,9 +49,10 @@ def train(rng):
         args.env_id, args.seed + i, i, args.capture_video, args.exp_name) for i in range(args.num_envs)])
 
     rng, actor_rng, critic_rng = random.split(rng, 3)
-    actor = hk.transform(lambda x: hk.nets.MLP(
-        [64, 2], activation=jnp.tanh)(x))
-    actor_params = actor.init(rng=actor_rng, x=jnp.zeros(envs.single_observation_space.shape))
+    actor = hk.transform(lambda x: MLPActor(
+        hidden_size=64, num_actions=envs.single_action_space.n)(x))
+    actor_params = actor.init(rng=actor_rng, x=jnp.zeros(
+        envs.single_observation_space.shape))
 
     optimizer = optax.chain(
         optax.clip(1.0),
@@ -92,11 +94,12 @@ def fill_buffer(envs, actor_params, actor, rng):
     next_done = np.zeros((args.num_envs,))
     for t in range(args.num_steps):
         rng, actor_rng, sample_rng = random.split(rng, 3)
-        logits = actor.apply(params=actor_params, x=next_obs, rng=actor_rng)
+        action_dists = actor.apply(
+            params=actor_params, x=next_obs, rng=actor_rng)
         # Todo: modify actor networks to return a distribution object instead of logits
-        actions = np.array(Categorical(logits=logits).sample(sample_rng))
+        actions = np.array(action_dists.sample(sample_rng))
         buffer[t] = {'obs': next_obs, 'act': actions, 'done': next_done,
-                     'logp': Categorical(logits=logits).log_prob(actions)}
+                     'logp': action_dists.log_prob(actions)}
         next_obs, reward, done, info = envs.step(actions)
         buffer[t] = {'rew': reward, 'next_obs': next_obs}
 
@@ -134,8 +137,8 @@ def policy_loss(actor_params, actor, mini_batch, rng):
     '''
     obs, act, adv, old_logp = mini_batch['obs'], mini_batch['act'], mini_batch['adv'], mini_batch['logp']
     rng, actor_rng = random.split(rng)
-    logits = actor.apply(params=actor_params, x=obs, rng=actor_rng)
-    log_probs = Categorical(logits=logits).log_prob(act.astype(int))
+    log_probs = actor.apply(params=actor_params, x=obs,
+                            rng=actor_rng).log_prob(act.astype(int))
     # ! importance weights for off-policy updates should not be involved in the gradient computation.
     loss = - (log_probs * jax.lax.stop_gradient(adv *
               log_probs / old_logp)).mean()
@@ -179,7 +182,7 @@ def learn(buffer, actor, actor_params, optimizer, optimizer_state, rng):
             total_loss += loss
 
     avg_loss = total_loss / args.iters_per_epoch
-    avg_reward = jnp.sum(buffer['rew']) / (jnp.sum(buffer['done']) + args.num_envs-
+    avg_reward = jnp.sum(buffer['rew']) / (jnp.sum(buffer['done']) + args.num_envs -
                                            jnp.sum(buffer[-1]['done']))  # divided by the number of episodes in the buffer
 
     stats = {
