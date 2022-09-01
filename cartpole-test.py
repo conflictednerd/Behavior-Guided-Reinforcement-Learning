@@ -1,22 +1,19 @@
 import gym
 import haiku as hk
-import jax
 import jax.numpy as jnp
 import jax.random as random
-import numpy as np
 import optax
 
 import data.collector as collector
-from data.storage import DictList
 from hyperparams import get_args
 from networks import MLPActor
+from RL.fast import PG_loss_and_grad
 
 """
 This file serve as a test bed for sanity checking my implementations with the cartpole environment.
 Currently, I am using an off-policy version of the REINFORCE algorithm modified so that it can use replay buffers and batch updates.
 
 TODO: Code cleanup
-    TODO: rl policy gradient loss (actor_loss) must be defined in rl.py
     TODO: [Advance] fill_buffer should be jit-able so that we can use vmap, pmap to to collect trajectories using multiple workers
 TODO: Proper evaluation (along with video of sample runs) in a separate env should be implemented.
 TODO: Add a critic network and use it to add a baseline to the RL objective
@@ -77,36 +74,6 @@ def train(rng):
         del buffer
 
 
-def policy_loss(actor_params, actor, mini_batch, rng, use_importance_weights=False):
-    '''
-    function that computes the policy loss given a mini-batch
-    will call grad on it to get the gradients
-
-    Vanilla policy gradient loss (REINFORCE) with importance sampling.
-    Important theoretical caveat: In actuality, the importance ratio (new_log_p/old_logp) must be computed over the entire trajectory, and not just for a single time-step.
-    However, when the behavior policy is not "far from" the policy to be updated, we can use a first order approximate of the full importance ratio.
-    importance weights for off-policy updates should not be involved in the gradient computation.
-    For more details, checkout this https://youtu.be/KZd508qGFt0
-    '''
-    obs, act, adv = mini_batch['obs'], mini_batch['act'], mini_batch['adv']
-    if use_importance_weights:
-        old_logp = mini_batch['logp']
-    rng, actor_rng = random.split(rng)
-    log_probs = actor.apply(params=actor_params, x=obs,
-                            rng=actor_rng).log_prob(act.astype(int))
-    # !
-    loss = - (log_probs * jax.lax.stop_gradient(adv * log_probs / old_logp
-                                                if use_importance_weights else adv)
-              ).mean()
-    return loss
-
-
-def value_loss():
-    '''
-    function that computes critic's loss given a mini-batch
-    '''
-
-
 def learn(buffer, actor, actor_params, optimizer, optimizer_state, rng):
     '''
     Use the info in the buffer to compute the loss and optimize the policy
@@ -121,14 +88,14 @@ def learn(buffer, actor, actor_params, optimizer, optimizer_state, rng):
     # * for each minibatch
     # * compute the loss
     # * update the networks
-    total_loss = 0  # todo report average reward as well
+    total_loss = 0
     for i in range(args.iters_per_epoch):
         rng, shuffle_rng = random.split(rng)
         indices = random.permutation(shuffle_rng, len(buffer))
         for j in range(0, len(buffer), args.mini_batch_size):
             mini_batch = buffer[indices[j: j + args.mini_batch_size]]
             rng, mb_rng = random.split(rng)
-            loss, grads = jax.value_and_grad(policy_loss)(
+            loss, grads = PG_loss_and_grad(
                 actor_params, actor, mini_batch, mb_rng)
 
             updates, optimizer_state = optimizer.update(
