@@ -1,12 +1,13 @@
 import gym
 import haiku as hk
+import jax
 import jax.numpy as jnp
 import jax.random as random
 import optax
 
 import data.collector as collector
 from hyperparams import get_args
-from networks import MLPActor
+from networks.actor import MLPActor
 from RL.fast import PG_loss_and_grad
 
 """
@@ -41,14 +42,15 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 def train(rng):
     # ATTENTION: SyncVectorEnv automatically resets the envs when they are done
     args.capture_video = True
-    envs = gym.vector.SyncVectorEnv([make_env(
+    envs = gym.vector.AsyncVectorEnv([make_env(
         args.env_id, args.seed + i, i, args.capture_video, args.exp_name) for i in range(args.num_envs)], new_step_api=True)
 
     rng, actor_rng, critic_rng = random.split(rng, 3)
     actor = hk.transform(lambda x: MLPActor(
-        hidden_size=64, num_actions=envs.single_action_space.n)(x))
+        hidden_dims=[64, 64], num_actions=envs.single_action_space.n)(x))
     actor_params = actor.init(rng=actor_rng, x=jnp.zeros(
         envs.single_observation_space.shape))
+    actor = jax.jit(actor.apply)
 
     optimizer = optax.chain(
         optax.clip(1.0),
@@ -60,9 +62,9 @@ def train(rng):
         rng, buffer_rng, learn_rng = random.split(rng, 3)
 
         print('Collecting samples...')
-        buffer, next_done = collector.collect_rollouts(
+        buffer, next_terminated = collector.collect_rollouts(
             envs, (actor_params, actor), args, buffer_rng)
-        buffer = collector.compute_returns(buffer, next_done, args)
+        buffer = collector.compute_returns(buffer, next_terminated, args)
         buffer.flatten()
 
         print('Optimizing...')
@@ -96,7 +98,7 @@ def learn(buffer, actor, actor_params, optimizer, optimizer_state, rng):
             mini_batch = buffer[indices[j: j + args.mini_batch_size]]
             rng, mb_rng = random.split(rng)
             loss, grads = PG_loss_and_grad(
-                actor_params, actor, mini_batch, mb_rng)
+                actor_params, actor, mini_batch, mb_rng, use_importance_weights=True)
 
             updates, optimizer_state = optimizer.update(
                 grads, optimizer_state, actor_params)

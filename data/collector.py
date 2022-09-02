@@ -1,6 +1,6 @@
 import argparse
 from functools import partial
-from typing import Tuple
+from typing import Callable, Tuple
 
 import gym
 import haiku as hk
@@ -11,12 +11,12 @@ import numpy as np
 from data.storage import DictList
 
 
-def collect_rollouts(envs: gym.vector.VectorEnv, agent: Tuple[hk.Params, hk.Transformed], args: argparse.Namespace, rng) -> Tuple[DictList, np.ndarray]:
+def collect_rollouts(envs: gym.vector.VectorEnv, agent: Tuple[hk.Params, Callable], args: argparse.Namespace, rng) -> Tuple[DictList, np.ndarray]:
     """Runs the vectorized environments for args.num_steps to collect experience
 
     Args:
         envs (gym.vector.VectorEnv): vectorized envs to run
-        agent (Tuple[hk.Params, hk.Transformed]): a tuple of (actor_params, actor) that is used to generate actions
+        agent (Tuple[hk.Params, Callable]): a tuple of (actor_params, actor) that is used to generate actions
         args (argparse.Namespace): holder of relevant arguments
         rng (): key for random number generation
 
@@ -42,7 +42,7 @@ def collect_rollouts(envs: gym.vector.VectorEnv, agent: Tuple[hk.Params, hk.Tran
         (args.num_envs,), dtype=bool), np.zeros((args.num_envs,), dtype=bool)
     for t in range(args.num_steps):
         rng, actor_rng, sample_rng = random.split(rng, 3)
-        action_dists = actor.apply(
+        action_dists = actor(
             params=actor_params, x=obs, rng=actor_rng)
         actions = np.array(action_dists.sample(sample_rng))
         buffer[t] = {'obs': obs, 'act': actions, 'terminated': next_terminated, 'truncated': next_truncated, 'done': next_terminated | next_truncated,
@@ -58,7 +58,7 @@ def collect_rollouts(envs: gym.vector.VectorEnv, agent: Tuple[hk.Params, hk.Tran
 
 
 # TODO: Make it jit-able
-def compute_returns(buffer: DictList, next_done: np.ndarray, args: argparse.Namespace) -> DictList:
+def compute_returns(buffer: DictList, next_terminated: np.ndarray, args: argparse.Namespace) -> DictList:
     """Compute returns (reward-to-gos) for a buffer
 
     Args:
@@ -73,10 +73,10 @@ def compute_returns(buffer: DictList, next_done: np.ndarray, args: argparse.Name
     for t in reversed(range(args.num_steps)):
         # TODO: when a critic is added, truncated but not terminated episodes should bootstrap using critic values whereas terminated episodes should use a value of 0 (right now all are zero)
         if t == args.num_steps-1:
-            next_nonterminal = 1-next_done
+            next_nonterminal = 1-next_terminated
             next_return = np.zeros(args.num_envs)  # critic(next_obs)
         else:
-            next_nonterminal = 1 - buffer[t+1]['done']
+            next_nonterminal = 1 - buffer[t+1]['terminated']
             next_return = buffer[t+1]['returns']
         buffer[t] = {'returns': buffer[t]['rew'] +
                      args.gamma*next_nonterminal*next_return}

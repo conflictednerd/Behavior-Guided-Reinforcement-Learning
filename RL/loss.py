@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Dict
+from typing import Callable, Dict
 
 import haiku as hk
 import jax
@@ -7,7 +7,7 @@ import jax.random as random
 
 
 @partial(jax.jit, static_argnums=(1, 4))
-def policy_gradient_loss(actor_params: hk.Params, actor: hk.Transformed, mini_batch: Dict, rng, use_importance_weights: bool = False):
+def policy_gradient_loss(actor_params: hk.Params, actor: Callable, mini_batch: Dict, rng, use_importance_weights: bool = False):
     """Function whose derivative with respect to its first parameter is the policy gradient (REINFORCE loss)
         mini-batch must contain:
             'obs': observations
@@ -32,8 +32,8 @@ def policy_gradient_loss(actor_params: hk.Params, actor: hk.Transformed, mini_ba
     if use_importance_weights:
         old_logp = mini_batch['logp']
     rng, actor_rng = random.split(rng)
-    log_probs = actor.apply(params=actor_params, x=obs,
-                            rng=actor_rng).log_prob(act.astype(int))
+    log_probs = actor(params=actor_params, x=obs,
+                      rng=actor_rng).log_prob(act.astype(int))
 
     loss = - (log_probs * jax.lax.stop_gradient(adv * log_probs / old_logp
                                                 if use_importance_weights else adv)

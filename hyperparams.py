@@ -14,11 +14,11 @@ def get_args(arg_set: str = 'default') -> argparse.Namespace:
                             help='the id of the env (must by gym-registered)')
         parser.add_argument('--gamma', type=float, default=0.99,
                             help='discount factor')
-        parser.add_argument('--num-envs', type=int, default=4,
+        parser.add_argument('--num-envs', type=int, default=8,
                             help='number of parallel envs used for data collection')
-        parser.add_argument('--num-steps', type=int, default=1024,
+        parser.add_argument('--num-steps', type=int, default=512,
                             help='number of steps to run each env for a rollout')
-        parser.add_argument('--mini-batch-size', type=int, default=512,
+        parser.add_argument('--mini-batch-size', type=int, default=256,
                             help='number of transition samples in each mini-batch')
         parser.add_argument('--epochs', type=int, default=20,
                             help='number of training epochs')
