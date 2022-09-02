@@ -26,14 +26,13 @@ args = get_args()
 
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
-        env = gym.make(env_id)
+        env = gym.make(env_id, new_step_api=True, render_mode='rgb_array')
         # env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
             if idx == 0:
-                env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-        env.seed(seed)
-        env.action_space.seed(seed)
-        env.observation_space.seed(seed)
+                env = gym.wrappers.RecordVideo(
+                    env, f"videos/{run_name}", new_step_api=True, episode_trigger=lambda e: e % 75 == 1)  # Record every 75 episodes
+        env.reset(seed=seed+idx)
         return env
 
     return thunk
@@ -41,8 +40,9 @@ def make_env(env_id, seed, idx, capture_video, run_name):
 
 def train(rng):
     # ATTENTION: SyncVectorEnv automatically resets the envs when they are done
+    args.capture_video = True
     envs = gym.vector.SyncVectorEnv([make_env(
-        args.env_id, args.seed + i, i, args.capture_video, args.exp_name) for i in range(args.num_envs)])
+        args.env_id, args.seed + i, i, args.capture_video, args.exp_name) for i in range(args.num_envs)], new_step_api=True)
 
     rng, actor_rng, critic_rng = random.split(rng, 3)
     actor = hk.transform(lambda x: MLPActor(
