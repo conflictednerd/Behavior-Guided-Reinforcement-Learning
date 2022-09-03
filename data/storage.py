@@ -1,9 +1,13 @@
 from collections.abc import MutableMapping
 from typing import Dict, Tuple, Union
 
+import jax
+import jax.numpy as jnp
 import numpy as np
+from jax.tree_util import register_pytree_node_class
 
 
+@register_pytree_node_class
 class DictList(MutableMapping):
     '''
     A simple Dict-List hybrid that can be used to store rollouts of fixed length across multiple environments
@@ -32,11 +36,13 @@ class DictList(MutableMapping):
         }
         '''
         self.shape = (shape, ) if isinstance(shape, int) else shape
+        self.info = info
         self.length = 1
         for d in self.shape:
             self.length *= d
 
         self.data = dict()
+        self.additional_data = []
         for key, val in info.items():
             val = tuple() if val == 1 else val
             self.data[key] = np.zeros(
@@ -99,6 +105,27 @@ class DictList(MutableMapping):
         Useful for aggregating multiple parallel rollout workers
         '''
         pass
+
+    def tree_flatten(self, ):
+        aux_data = {
+            'shape': self.shape,
+            'info': self.info,
+        }
+        dict_data, additional_data = [], self.additional_data
+        for key in self.info.keys():
+            dict_data.append(self.data[key])
+
+        children = (dict_data, additional_data)
+        return (children, aux_data)
+
+    @classmethod
+    def tree_unflatten(cls, aux_data, children):
+        obj = cls(aux_data['shape'], aux_data['info'])
+        dict_data, additional_data = children
+        for (key, val) in zip(aux_data['info'].keys(), dict_data):
+            obj.data[key] = val
+        obj.additional_data = additional_data
+        return obj
 
 
 # Uncomment this to see an illustrative example
