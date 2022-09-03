@@ -87,3 +87,38 @@ def compute_returns(buffer: DictList, gamma: float) -> jnp.ndarray:
             buffer[t]['rew'] + gamma*next_nonterminal*next_return)
 
     return returns
+
+
+# TODO: Right now the loop will be completely unrolled by jax. Rewrite it with jax.lax.scan to avoid this.
+@partial(jax.jit, static_argnames=['V', 'gamma', 'gae_lambda'])
+def compute_gae(buffer: DictList, V: Callable, gamma: float, gae_lambda: float) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    """Compute generalized advantage estimates for trajectories in the buffer
+
+    Args:
+        buffer (DictList): buffer of collected experiences
+        V (Callable): value function
+        gamma (float): discount factor
+        gae_lambda (float): coefficient lambda used in GAE
+
+    Returns:
+        Tuple[jnp.ndarray, jnp.ndarray]: tuple of device arrays containing returns and advantages
+    """
+    assert len(buffer.shape) == 2
+    num_steps, num_envs = buffer.shape
+    last_next_terminated = buffer.additional_data[0]
+    advantages, returns = jnp.zeros(buffer.shape), jnp.zeros(buffer.shape)
+    next_value = V(buffer['next_obs'][-1]).flatten()
+    for t in reversed(range(num_steps)):
+        if t == num_steps - 1:
+            next_nonterminal = 1 - last_next_terminated
+        else:
+            next_nonterminal = 1 - buffer['terminated'][t+1]
+        current_value = V(buffer['obs'][t]).flatten()
+        delta = buffer['rew'][t] + gamma * \
+            next_value * next_nonterminal - current_value
+        advantages = advantages.at[t].set(
+            delta + gamma * gae_lambda * next_nonterminal * (0 if t == num_steps - 1 else advantages[t+1]))
+        returns = returns.at[t].set(advantages[t] + current_value)
+        next_value = current_value
+
+    return returns, advantages
