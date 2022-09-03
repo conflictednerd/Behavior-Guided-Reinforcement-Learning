@@ -3,6 +3,7 @@ import haiku as hk
 import jax
 import jax.numpy as jnp
 import jax.random as random
+import numpy as np
 import optax
 
 import data.collector as collector
@@ -62,9 +63,11 @@ def train(rng):
         rng, buffer_rng, learn_rng = random.split(rng, 3)
 
         print('Collecting samples...')
-        buffer, next_terminated = collector.collect_rollouts(
+        buffer = collector.collect_rollouts(
             envs, (actor_params, actor), args, buffer_rng)
-        buffer = collector.compute_returns(buffer, next_terminated, args)
+        # ! Caution: buffer[:]['adv'] will not update in place
+        buffer['returns'][:] = buffer['adv'][:] = np.array(
+            collector.compute_returns(buffer, args.gamma))
         buffer.flatten()
 
         print('Optimizing...')

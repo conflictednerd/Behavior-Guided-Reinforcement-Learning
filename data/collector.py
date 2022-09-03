@@ -5,6 +5,7 @@ from typing import Callable, Tuple
 import gym
 import haiku as hk
 import jax
+import jax.numpy as jnp
 import jax.random as random
 import numpy as np
 
@@ -54,34 +55,35 @@ def collect_rollouts(envs: gym.vector.VectorEnv, agent: Tuple[hk.Params, Callabl
         obs, next_terminated, next_truncated = np.array(next_obs), np.array(
             next_terminated, dtype=bool), np.array(next_truncated, dtype=bool)
 
-    return buffer, next_terminated
+    buffer.additional_data.append(next_terminated)
+    buffer.additional_data.append(next_truncated)
+    return buffer
 
 
-# TODO: Make it jit-able
-def compute_returns(buffer: DictList, next_terminated: np.ndarray, args: argparse.Namespace) -> DictList:
+# TODO: Right now the loop will be completely unrolled by jax. Rewrite it with jax.lax.scan to avoid this.
+@partial(jax.jit, static_argnames=['gamma'])
+def compute_returns(buffer: DictList, gamma: float) -> jnp.ndarray:
     """Compute returns (reward-to-gos) for a buffer
 
     Args:
-        buffer (DictList): buffer of collected experiences
-        next_done (np.ndarray): done values for the last+1 time-step, used for correct bootstrapping of values.
-        args (argparse.Namespace): holder of relevant arguments
+        buffer (DictList): buffer of collected experiences. Must also have last_next_terminated field.
+        gamma (float): discount factor
 
     Returns:
-        DictList: same buffer, with its 'returns' data field set.
+        jnp.ndarray: device array of returns
     """
     assert len(buffer.shape) == 2
-    for t in reversed(range(args.num_steps)):
-        # TODO: when a critic is added, truncated but not terminated episodes should bootstrap using critic values whereas terminated episodes should use a value of 0 (right now all are zero)
-        if t == args.num_steps-1:
-            next_nonterminal = 1-next_terminated
-            next_return = np.zeros(args.num_envs)  # critic(next_obs)
+    num_steps, num_envs = buffer.shape
+    returns = jnp.zeros(buffer.shape)
+    last_next_terminated = buffer.additional_data[0]
+    for t in reversed(range(num_steps)):
+        if t == num_steps-1:
+            next_nonterminal = 1 - last_next_terminated
+            next_return = jnp.zeros(num_envs)
         else:
             next_nonterminal = 1 - buffer[t+1]['terminated']
-            next_return = buffer[t+1]['returns']
-        buffer[t] = {'returns': buffer[t]['rew'] +
-                     args.gamma*next_nonterminal*next_return}
+            next_return = returns[t+1]
+        returns = returns.at[t].set(
+            buffer[t]['rew'] + gamma*next_nonterminal*next_return)
 
-    # adv = returns - values
-    # ! Caution: buffer[:]['adv'] will not update in place
-    buffer['adv'][:] = buffer['returns'][:]
-    return buffer
+    return returns
