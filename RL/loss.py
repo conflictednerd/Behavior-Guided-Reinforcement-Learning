@@ -4,6 +4,7 @@ from typing import Callable, Dict
 import haiku as hk
 import jax
 import jax.random as random
+import jax.numpy as jnp
 
 
 @partial(jax.jit, static_argnums=(1, 4))
@@ -35,7 +36,7 @@ def policy_gradient_loss(actor_params: hk.Params, actor: Callable, mini_batch: D
     log_probs = actor(params=actor_params, x=obs,
                       rng=actor_rng).log_prob(act.astype(int))
 
-    loss = - (log_probs * jax.lax.stop_gradient(adv * log_probs / old_logp
-                                                if use_importance_weights else adv)
-              ).mean()
+    loss = - (log_probs * jax.lax.stop_gradient(
+        (adv * jnp.exp(log_probs - old_logp)) if use_importance_weights else adv)
+    ).mean()
     return loss
