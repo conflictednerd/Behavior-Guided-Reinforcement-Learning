@@ -53,9 +53,12 @@ def train(rng):
         envs.single_observation_space.shape))
     actor = jax.jit(actor.apply)
 
+    total_steps = args.epochs * args.iters_per_epoch * \
+        (args.num_envs * args.num_steps / args.mini_batch_size)
+    lr_schedule = optax.cosine_decay_schedule(args.lr, decay_steps=total_steps)
     optimizer = optax.chain(
         optax.clip(1.0),
-        optax.adam(learning_rate=args.lr),
+        optax.adam(learning_rate=lr_schedule),
     )
     optimizer_state = optimizer.init(actor_params)
 
