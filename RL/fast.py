@@ -1,6 +1,6 @@
 import jax
 
-from RL.loss import policy_gradient_loss
+from RL.loss import policy_gradient_loss, value_loss
 
 '''
 This module contains fast and jitted versions of loss function and their gradients
@@ -14,3 +14,5 @@ PG_grad = jax.jit(jax.grad(policy_gradient_loss),
                   static_argnames=('actor', 'use_importance_weights'))
 PG_loss_and_grad = jax.jit(jax.value_and_grad(
     policy_gradient_loss), static_argnames=('actor', 'use_importance_weights'))
+value_loss_and_grad = jax.jit(jax.value_and_grad(
+    value_loss), static_argnames=['critic', 'vf_coef'])

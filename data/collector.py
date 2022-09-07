@@ -61,7 +61,7 @@ def collect_rollouts(envs: gym.vector.VectorEnv, agent: Tuple[hk.Params, Callabl
 
 
 # TODO: Right now the loop will be completely unrolled by jax. Rewrite it with jax.lax.scan to avoid this.
-@partial(jax.jit, static_argnames=['gamma'])
+# @partial(jax.jit, static_argnames=['gamma'])
 def compute_returns(buffer: DictList, gamma: float) -> jnp.ndarray:
     """Compute returns (reward-to-gos) for a buffer
 
@@ -90,8 +90,8 @@ def compute_returns(buffer: DictList, gamma: float) -> jnp.ndarray:
 
 
 # TODO: Right now the loop will be completely unrolled by jax. Rewrite it with jax.lax.scan to avoid this.
-@partial(jax.jit, static_argnames=['V', 'gamma', 'gae_lambda'])
-def compute_gae(buffer: DictList, V: Callable, gamma: float, gae_lambda: float) -> Tuple[jnp.ndarray, jnp.ndarray]:
+# @partial(jax.jit, static_argnames=['V', 'gamma', 'gae_lambda'])
+def compute_gae(buffer: DictList, V: Callable, rng, gamma: float, gae_lambda: float) -> Tuple[jnp.ndarray, jnp.ndarray]:
     """Compute generalized advantage estimates for trajectories in the buffer
 
     Args:
@@ -104,16 +104,21 @@ def compute_gae(buffer: DictList, V: Callable, gamma: float, gae_lambda: float) 
         Tuple[jnp.ndarray, jnp.ndarray]: tuple of device arrays containing returns and advantages
     """
     assert len(buffer.shape) == 2
+    V_params, V = V
+    rng, v_rng = random.split(rng)
     num_steps, num_envs = buffer.shape
     last_next_terminated = buffer.additional_data[0]
     advantages, returns = jnp.zeros(buffer.shape), jnp.zeros(buffer.shape)
-    next_value = V(buffer['next_obs'][-1]).flatten()
+    next_value = V(params=V_params,
+                   x=buffer['next_obs'][-1], rng=v_rng).flatten()
     for t in reversed(range(num_steps)):
         if t == num_steps - 1:
             next_nonterminal = 1 - last_next_terminated
         else:
             next_nonterminal = 1 - buffer['terminated'][t+1]
-        current_value = V(buffer['obs'][t]).flatten()
+        rng, v_rng = random.split(rng)
+        current_value = V(
+            params=V_params, x=buffer['obs'][t], rng=v_rng).flatten()
         delta = buffer['rew'][t] + gamma * \
             next_value * next_nonterminal - current_value
         advantages = advantages.at[t].set(

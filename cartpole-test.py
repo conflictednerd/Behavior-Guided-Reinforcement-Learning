@@ -9,7 +9,8 @@ import optax
 import data.collector as collector
 from hyperparams import get_args
 from networks.actor import MLPActor
-from RL.fast import PG_loss_and_grad
+from networks.common import MLP
+from RL.fast import PG_loss_and_grad, value_loss_and_grad
 
 """
 This file serve as a test bed for sanity checking my implementations with the cartpole environment.
@@ -18,9 +19,8 @@ Currently, I am using an off-policy version of the REINFORCE algorithm modified 
 TODO: Code cleanup
     TODO: [Advance] fill_buffer should be jit-able so that we can use vmap, pmap to to collect trajectories using multiple workers
 TODO: Proper evaluation (along with video of sample runs) in a separate env should be implemented.
-TODO: Add a critic network and use it to add a baseline to the RL objective
 
-? Right now I'm getting a score of ~285 after 20 epochs of training.
+? Right now I'm getting a score of ~500 (max_score) after 8 epochs of training (quite stable).
 """
 
 args = get_args()
@@ -33,7 +33,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(
-                    env, f"videos/{run_name}", new_step_api=True, episode_trigger=lambda e: e % 75 == 1)  # Record every 75 episodes
+                    env, f"videos/{run_name}", new_step_api=True, episode_trigger=lambda e: e % 20 == 1)  # Record every 75 episodes
         env.reset(seed=seed+idx)
         return env
 
@@ -53,36 +53,49 @@ def train(rng):
         envs.single_observation_space.shape))
     actor = jax.jit(actor.apply)
 
+    critic = hk.transform(lambda x: MLP(
+        hidden_dims=[64, 64], out_dim=1)(x))
+    critic_params = critic.init(rng=critic_rng, x=jnp.zeros(
+        envs.single_observation_space.shape))
+    critic = jax.jit(critic.apply)
+
     total_steps = args.epochs * args.iters_per_epoch * \
         (args.num_envs * args.num_steps / args.mini_batch_size)
-    lr_schedule = optax.cosine_decay_schedule(args.lr, decay_steps=total_steps)
+    lr_schedule = optax.cosine_decay_schedule(
+        args.lr, decay_steps=total_steps//2)
+    # lr_schedule = optax.constant_schedule(args.lr)
     optimizer = optax.chain(
         optax.clip(1.0),
         optax.adam(learning_rate=lr_schedule),
     )
-    optimizer_state = optimizer.init(actor_params)
+    optimizer_state = optimizer.init((actor_params, critic_params))
 
     for epoch in range(args.epochs):
-        rng, buffer_rng, learn_rng = random.split(rng, 3)
+        rng, buffer_rng, gae_rng, learn_rng = random.split(rng, 4)
 
         print('Collecting samples...')
         buffer = collector.collect_rollouts(
             envs, (actor_params, actor), args, buffer_rng)
         # ! Caution: buffer[:]['adv'] will not update in place
-        buffer['returns'][:] = buffer['adv'][:] = np.array(
-            collector.compute_returns(buffer, args.gamma))
+        # buffer['returns'][:] = buffer['adv'][:] = np.array(
+        #     collector.compute_returns(buffer, args.gamma))
+        ret, adv = collector.compute_gae(
+            buffer, (critic_params, critic), gae_rng, args.gamma, args.gae_lambda)
+        buffer['returns'][:] = ret
+        buffer['adv'][:] = adv
+
         buffer.flatten()
 
         print('Optimizing...')
-        actor_params, optimizer_state, stats = learn(
-            buffer, actor, actor_params, optimizer, optimizer_state, learn_rng)
+        actor_params, critic_params, optimizer_state, stats = learn(
+            buffer, actor, actor_params, critic, critic_params, optimizer, optimizer_state, learn_rng)
         print(
-            f'epoch:\t{epoch+1}\t loss:\t{stats["avg_loss"]}\t score:\t{stats["avg_reward"]}')
+            f'epoch:\t{epoch+1}\t a_loss:\t{stats["avg_actor_loss"]}\t c_loss:\t{stats["avg_critic_loss"]}\t score:\t{stats["avg_reward"]}')
         # evaluate()
         del buffer
 
 
-def learn(buffer, actor, actor_params, optimizer, optimizer_state, rng):
+def learn(buffer, actor, actor_params, critic, critic_params, optimizer, optimizer_state, rng):
     '''
     Use the info in the buffer to compute the loss and optimize the policy
     then flatten and make mini-batches from the buffer
@@ -96,32 +109,39 @@ def learn(buffer, actor, actor_params, optimizer, optimizer_state, rng):
     # * for each minibatch
     # * compute the loss
     # * update the networks
-    total_loss = 0
+    total_actor_loss, total_critic_loss = 0, 0
     for i in range(args.iters_per_epoch):
         rng, shuffle_rng = random.split(rng)
         indices = random.permutation(shuffle_rng, len(buffer))
         for j in range(0, len(buffer), args.mini_batch_size):
             mini_batch = buffer[indices[j: j + args.mini_batch_size]]
-            rng, mb_rng = random.split(rng)
-            loss, grads = PG_loss_and_grad(
-                actor_params, actor, mini_batch, mb_rng, use_importance_weights=True)
+            rng, actor_rng, critic_rng = random.split(rng, 3)
+            actor_loss, actor_grads = PG_loss_and_grad(
+                actor_params, actor, mini_batch, actor_rng, use_importance_weights=True)
+            critic_loss, critic_grads = value_loss_and_grad(
+                critic_params, critic, mini_batch, critic_rng, vf_coef=args.vf_coef)
 
             updates, optimizer_state = optimizer.update(
-                grads, optimizer_state, actor_params)
-            actor_params = optax.apply_updates(actor_params, updates)
+                (actor_grads, critic_grads), optimizer_state, (actor_params, critic_params))
+            actor_params, critic_params = optax.apply_updates(
+                (actor_params, critic_params), updates)
 
-            total_loss += loss
+            total_actor_loss += actor_loss
+            total_critic_loss += critic_loss
 
-    avg_loss = total_loss / args.iters_per_epoch
+    # Bookkeeping
+    avg_actor_loss = total_actor_loss / args.iters_per_epoch
+    avg_critic_loss = total_critic_loss / args.iters_per_epoch
     avg_reward = jnp.sum(buffer['rew']) / (jnp.sum(buffer['done']) + args.num_envs -
                                            jnp.sum(buffer[-1]['done']))  # divided by the number of episodes in the buffer
 
     stats = {
-        'avg_loss': avg_loss,
+        'avg_actor_loss': avg_actor_loss,
+        'avg_critic_loss': avg_critic_loss,
         'avg_reward': avg_reward,
     }
 
-    return actor_params, optimizer_state, stats
+    return actor_params, critic_params, optimizer_state, stats
 
 
 def evaluate():

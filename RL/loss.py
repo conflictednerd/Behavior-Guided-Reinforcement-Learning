@@ -7,7 +7,16 @@ import jax.random as random
 import jax.numpy as jnp
 
 
-@partial(jax.jit, static_argnums=(1, 4))
+@partial(jax.jit, static_argnames=['critic', 'vf_coef'])
+def value_loss(critic_params: hk.Params, critic: Callable, mini_batch: Dict, rng, vf_coef: float = 1.0):
+    obs, returns = mini_batch['obs'], mini_batch['returns']
+    values = critic(params=critic_params, x=obs, rng=rng)
+    loss = (0.5 * (values - returns)**2).mean()
+    loss *= vf_coef
+    return loss
+
+
+@partial(jax.jit, static_argnames=['actor', 'use_importance_weights'])
 def policy_gradient_loss(actor_params: hk.Params, actor: Callable, mini_batch: Dict, rng, use_importance_weights: bool = False):
     """Function whose derivative with respect to its first parameter is the policy gradient (REINFORCE loss)
         mini-batch must contain:

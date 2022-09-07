@@ -12,7 +12,7 @@ class MLP(hk.Module):
 
     def __init__(self,
                  hidden_dims: Iterable[int],
-                 num_actions: int,
+                 out_dim: int,
                  w_init: Optional[hk.initializers.Initializer] = None,
                  b_init: Optional[hk.initializers.Initializer] = None,
                  activation: Callable[[jnp.ndarray], jnp.ndarray] = jnp.tanh,
@@ -25,9 +25,9 @@ class MLP(hk.Module):
         self.activation = activation
         self.activate_final = activate_final
         self.hidden_dims = tuple(hidden_dims)
-        self.num_actions = num_actions
+        self.out_dim = out_dim
         self.layers = []
-        for index, output_size in enumerate(self.hidden_dims + (self.num_actions,)):
+        for index, output_size in enumerate(self.hidden_dims + (self.out_dim,)):
             self.layers.append(hk.Linear(
                 output_size=output_size,
                 w_init=w_init,
@@ -41,7 +41,7 @@ class MLP(hk.Module):
         x = self.layers[-1](x)
         return self.activation(x) if self.activate_final else x
 
-# model = hk.transform(lambda x: MLP(hidden_dims=[64, 64], num_actions=2)(x))
+# model = hk.transform(lambda x: MLP(hidden_dims=[64, 64], out_dim=2)(x))
 # B, H = 64, 4
 # params = model.init(rng=jax.random.PRNGKey(0), x=jnp.zeros((H,)))
 # out = model.apply(params=params, x=jnp.zeros((B, H)), rng=None)
