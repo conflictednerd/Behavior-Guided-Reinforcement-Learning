@@ -38,7 +38,7 @@ def collect_rollouts(envs: gym.vector.VectorEnv, agent: Tuple[hk.Params, Callabl
         'logp': 1,  # For calculating importance weights in off-policy learning
     })
 
-    obs = envs.reset()
+    obs, _ = envs.reset()
     next_terminated, next_truncated = np.zeros(
         (args.num_envs,), dtype=bool), np.zeros((args.num_envs,), dtype=bool)
     for t in range(args.num_steps):
