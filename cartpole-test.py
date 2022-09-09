@@ -10,7 +10,7 @@ import data.collector as collector
 from hyperparams import get_args
 from networks.actor import MLPActor
 from networks.common import MLP
-from RL.fast import PG_loss_and_grad, value_loss_and_grad
+from RL.fast import PG_loss_and_grad, ppo_loss_and_grad, value_loss_and_grad
 
 """
 This file serve as a test bed for sanity checking my implementations with the cartpole environment.
@@ -20,7 +20,7 @@ TODO: Code cleanup
     TODO: [Advance] fill_buffer should be jit-able so that we can use vmap, pmap to to collect trajectories using multiple workers
 TODO: Proper evaluation (along with video of sample runs) in a separate env should be implemented.
 
-? Right now I'm getting a score of ~500 (max_score) after 8 epochs of training (quite stable).
+? Right now I'm getting a score of ~500 (max_score) after 10 epochs of training (stable).
 """
 
 args = get_args()
@@ -61,11 +61,11 @@ def train(rng):
 
     total_steps = args.epochs * args.iters_per_epoch * \
         (args.num_envs * args.num_steps / args.mini_batch_size)
-    lr_schedule = optax.cosine_decay_schedule(
-        args.lr, decay_steps=total_steps//2)
-    # lr_schedule = optax.constant_schedule(args.lr)
+    # lr_schedule = optax.cosine_decay_schedule(
+    #     args.lr, decay_steps=total_steps//2)
+    lr_schedule = optax.constant_schedule(args.lr)
     optimizer = optax.chain(
-        optax.clip(1.0),
+        # optax.clip(1.0),
         optax.adam(learning_rate=lr_schedule),
     )
     optimizer_state = optimizer.init((actor_params, critic_params))
@@ -79,23 +79,70 @@ def train(rng):
         # ! Caution: buffer[:]['adv'] will not update in place
         # buffer['returns'][:] = buffer['adv'][:] = np.array(
         #     collector.compute_returns(buffer, args.gamma))
-        ret, adv = collector.compute_gae(
+        ret, adv, vals = collector.compute_gae(
             buffer, (critic_params, critic), gae_rng, args.gamma, args.gae_lambda)
         buffer['returns'][:] = ret
         buffer['adv'][:] = adv
+        buffer['value'][:] = vals
 
         buffer.flatten()
 
         print('Optimizing...')
-        actor_params, critic_params, optimizer_state, stats = learn(
-            buffer, actor, actor_params, critic, critic_params, optimizer, optimizer_state, learn_rng)
+        # actor_params, critic_params, optimizer_state, stats = a2clearn(
+        #     buffer, actor, actor_params, critic, critic_params, optimizer, optimizer_state, learn_rng)
+        # print(
+        #     f'epoch:\t{epoch+1}\t a_loss:\t{stats["avg_actor_loss"]}\t c_loss:\t{stats["avg_critic_loss"]}\t score:\t{stats["avg_reward"]}'
+        # )
+
+        actor_params, critic_params, optimizer_state, stats = ppo_learn(
+            buffer, (actor, actor_params), (critic, critic_params), (optimizer, optimizer_state), args, learn_rng)
         print(
-            f'epoch:\t{epoch+1}\t a_loss:\t{stats["avg_actor_loss"]}\t c_loss:\t{stats["avg_critic_loss"]}\t score:\t{stats["avg_reward"]}')
+            f'epoch:\t{epoch+1}\t loss:\t{stats["avg_loss"]:.2f}\t score:\t{stats["avg_reward"]:.2f}\t a_loss:\t{stats["policy_loss"]:.2f}\t c_loss:\t{stats["value_loss"]:.2f}\t e_loss:\t{stats["entropy_loss"]:.2f}'
+        )
         # evaluate()
         del buffer
 
 
-def learn(buffer, actor, actor_params, critic, critic_params, optimizer, optimizer_state, rng):
+def ppo_learn(buffer, actor, critic, optimizer, args, rng):
+    actor, actor_params = actor
+    critic, critic_params = critic
+    optimizer, optimizer_state = optimizer
+
+    total_loss = 0
+    for i in range(args.iters_per_epoch):
+        rng, shuffle_rng = random.split(rng)
+        indices = random.permutation(shuffle_rng, len(buffer))
+        for j in range(0, len(buffer), args.mini_batch_size):
+            mini_batch = buffer[indices[j: j+args.mini_batch_size]]
+            rng, loss_rng = random.split(rng)
+            ppo_args = {
+                'clip_coef': args.clip_coef,
+                'ent_coef': args.ent_coef,
+                'vf_coef': args.vf_coef,
+                'clip_vloss': args.clip_vloss,
+            }
+            (loss, stats), grads = ppo_loss_and_grad(
+                (actor_params, critic_params), actor, critic, mini_batch, loss_rng, **ppo_args)
+            updates, optimizer_state = optimizer.update(
+                grads, optimizer_state, (actor_params, critic_params))
+            actor_params, critic_params = optax.apply_updates(
+                (actor_params, critic_params), updates)
+            total_loss += loss
+
+        if args.target_kl is not None and stats['approx_kl'] > args.target_kl:
+            break
+
+    # TODO: explained variance
+    avg_loss = total_loss / args.iters_per_epoch
+    avg_reward = jnp.sum(buffer['rew']) / (jnp.sum(buffer['done']) + args.num_envs -
+                                           jnp.sum(buffer[-1]['done']))  # divided by the number of episodes in the buffer
+    stats['avg_loss'] = avg_loss
+    stats['avg_reward'] = avg_reward
+
+    return actor_params, critic_params, optimizer_state, stats
+
+
+def a2clearn(buffer, actor, actor_params, critic, critic_params, optimizer, optimizer_state, rng):
     '''
     Use the info in the buffer to compute the loss and optimize the policy
     then flatten and make mini-batches from the buffer

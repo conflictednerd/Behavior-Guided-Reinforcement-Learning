@@ -16,8 +16,6 @@ def get_args(arg_set: str = 'default') -> argparse.Namespace:
                             help='discount factor')
         parser.add_argument('--gae_lambda', type=float,
                             default=0.95, help='lambda used for computing GAE')
-        parser.add_argument('--vf_coef', type=float,
-                            default=0.1, help='coefficient of value loss')
         parser.add_argument('--num-envs', type=int, default=4,
                             help='number of parallel envs used for data collection')
         parser.add_argument('--num-steps', type=int, default=1000,
@@ -30,6 +28,18 @@ def get_args(arg_set: str = 'default') -> argparse.Namespace:
                             help='number of times data buffer is iterated to update the networks')
         parser.add_argument('--lr', type=float, default=1e-3,
                             help="optimizer's learning rate")
+
+        # actor-critic arguments
+        parser.add_argument('--clip-coef', type=float, default=0.2,
+                            help="ppo's surrogate loss coefficient")
+        parser.add_argument('--vf-coef', type=float,
+                            default=0.1, help="coefficient of value loss")
+        parser.add_argument('--ent-coef', type=float,
+                            default=0.05, help="ppo's entropy loss coefficient")
+        parser.add_argument('--clip-vloss', type=lambda x: bool(strtobool(x)), default=True,
+                            nargs="?", const=True, help="controls whether ppo uses a clipped value loss or not")
+        parser.add_argument('--target-kl', type=float,
+                            default=None, help="target KL-divergence threshold")
 
         args = parser.parse_args()
         # ! Sanity checks:

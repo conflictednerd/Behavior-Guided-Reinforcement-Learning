@@ -35,6 +35,7 @@ def collect_rollouts(envs: gym.vector.VectorEnv, agent: Tuple[hk.Params, Callabl
         'done': 1,
         'returns': 1,
         'adv': 1,
+        'value': 1,
         'logp': 1,  # For calculating importance weights in off-policy learning
     })
 
@@ -101,14 +102,14 @@ def compute_gae(buffer: DictList, V: Callable, rng, gamma: float, gae_lambda: fl
         gae_lambda (float): coefficient lambda used in GAE
 
     Returns:
-        Tuple[jnp.ndarray, jnp.ndarray]: tuple of device arrays containing returns and advantages
+        Tuple[jnp.ndarray, jnp.ndarray, jnp.ndarray]: tuple of device arrays containing returns, advantages, and values
     """
     assert len(buffer.shape) == 2
     V_params, V = V
     rng, v_rng = random.split(rng)
     num_steps, num_envs = buffer.shape
     last_next_terminated = buffer.additional_data[0]
-    advantages, returns = jnp.zeros(buffer.shape), jnp.zeros(buffer.shape)
+    advantages, returns, values = jnp.zeros(buffer.shape), jnp.zeros(buffer.shape), jnp.zeros(buffer.shape)
     next_value = V(params=V_params,
                    x=buffer['next_obs'][-1], rng=v_rng).flatten()
     for t in reversed(range(num_steps)):
@@ -124,6 +125,7 @@ def compute_gae(buffer: DictList, V: Callable, rng, gamma: float, gae_lambda: fl
         advantages = advantages.at[t].set(
             delta + gamma * gae_lambda * next_nonterminal * (0 if t == num_steps - 1 else advantages[t+1]))
         returns = returns.at[t].set(advantages[t] + current_value)
+        values = values.at[t].set(current_value)
         next_value = current_value
 
-    return returns, advantages
+    return returns, advantages, values

@@ -13,8 +13,8 @@ Long story short, this repo is created because I wanted to
 So far, it has been a successful experience. I now know much more about JAX, I have implemented an off-policy version of REINFORCE (an actor-critic method coming soon) and all of this has resulted in progress towards implementing the paper too.
 
 A todo list (in no particular order):
-- [ ]  Implement a simple actor critic method to serve as a baseline (nothing fancy)
-- [ ]  (bit of a reach but) Implement PPO
+- [x]  Implement a simple actor critic method to serve as a baseline (nothing fancy)
+- [x]  (bit of a reach but) Implement PPO
 - [ ]  Use JAX to accelerate wherever possible (currently, experience collection is the bottleneck)
 - [ ]  Implement some more advanced neural networks (I eventually want to have recurrent policies)
 - [ ]  Implement proper logging with Tensorboard (I'm always lazy for logging)
