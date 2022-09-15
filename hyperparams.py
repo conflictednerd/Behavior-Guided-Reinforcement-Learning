@@ -44,14 +44,14 @@ def get_args(arg_set: str = 'default') -> argparse.Namespace:
 
     if arg_set == 'minigrid':
         args.capture_video = True
-        args.env_id = 'MiniGrid-Empty-5x5-v0'
-        args.gamma = 0.9
-        args.ent_coef = 0.01
+        args.env_id = 'MiniGrid-Empty-8x8-v0'
+        args.gamma = 0.95
+        args.ent_coef = 0.0
         args.vf_coef = 0.5
         args.num_steps = 1000
         args.mini_batch_size = 250
-        args.lr = 1e-2
-        args.epochs = 20
+        args.lr = 1e-3
+        args.epochs = 25
 
     # ! Sanity checks:
     assert (args.num_envs * args.num_steps) % args.mini_batch_size == 0

@@ -10,6 +10,7 @@ import numpy as np
 import optax
 from gym.core import ObservationWrapper
 from gym_minigrid.wrappers import FullyObsWrapper, ImgObsWrapper
+from gym_minigrid.minigrid import Goal
 
 import data.collector as collector
 from hyperparams import get_args
@@ -18,6 +19,41 @@ from networks.common import MLP
 from RL.fast import ppo_loss_and_grad
 
 args = get_args('minigrid')
+
+
+class DenseRewardWrapper(gym.Wrapper):
+
+    def __init__(self, env):
+        super().__init__(env)
+        self.goal_position: tuple = None
+        self.prev_position: tuple = None
+
+    def reset(self, **kwargs):
+        obs = self.env.reset(**kwargs)
+        if not self.goal_position:
+            self.goal_position = [
+                x for x, y in enumerate(self.grid.grid) if isinstance(y, Goal)
+            ]
+            if len(self.goal_position) >= 1:
+                self.goal_position = (
+                    int(self.goal_position[0] / self.height),
+                    self.goal_position[0] % self.width,
+                )
+        self.prev_position = (self.agent_pos[0], self.agent_pos[1])
+        return obs
+
+    def dist(self, x, y):
+        return abs(x[0] - y[0]) + abs(x[1] - y[1])
+
+    def step(self, action):
+        self.prev_position = (self.agent_pos[0], self.agent_pos[1])
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        reward += (args.gamma * (1 - self.dist((self.agent_pos[0], self.agent_pos[1]), self.goal_position) / (self.width+self.height)) -
+                   (1 - self.dist(self.prev_position, self.goal_position) /
+                    (self.width+self.height))
+                   )*0.2
+
+        return obs, reward, terminated, truncated, info
 
 
 class RewardWrapper(gym.Wrapper):
@@ -67,6 +103,7 @@ def make_env(env_id, seed, idx, capture_video, run_name):
         env = gym.make(env_id, render_mode='rgb_array')
         env = FullyObsWrapper(env)
         env = FlatImgDirObsWrapper(env)
+        env = DenseRewardWrapper(env)
         # env = RewardWrapper(env)
         # env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
@@ -172,6 +209,19 @@ def ppo_learn(buffer, actor, critic, optimizer, args, rng):
 
 if __name__ == '__main__':
     train(random.PRNGKey(args.seed))
+    # env = gym.make('MiniGrid-Empty-5x5-v0')
+    # action_map = ['left', 'right', 'forward',
+    #               'pickup', 'drop', 'toggle', 'done']
+    # env = FullyObsWrapper(env)
+    # env = FlatImgDirObsWrapper(env)
+    # env = DenseRewardWrapper(env)
+    # obs, info = env.reset()
+    # # for i in range(20):
+    # for act in [2, 2,1,2,2,6]:
+    #     # act = env.action_space.sample()
+    #     obs, rew, term, trunc, info = env.step(act)
+    #     print(
+    #         f'Action: {action_map[act]}\tReward: {rew}\tTerminated: {term}\tTruncated: {trunc}')
 
 
 # action_map = ['left', 'right', 'forward', 'pickup', 'drop', 'toggle', 'done']
