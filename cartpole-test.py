@@ -48,13 +48,13 @@ def train(rng):
 
     rng, actor_rng, critic_rng = random.split(rng, 3)
     actor = hk.transform(lambda x: MLPActor(
-        hidden_dims=[64, 64], num_actions=envs.single_action_space.n)(x))
+        hidden_dims=[256, 256], num_actions=envs.single_action_space.n, activation=jax.nn.relu)(x))
     actor_params = actor.init(rng=actor_rng, x=jnp.zeros(
         envs.single_observation_space.shape))
     actor = jax.jit(actor.apply)
 
     critic = hk.transform(lambda x: MLP(
-        hidden_dims=[64, 64], out_dim=1)(x))
+        hidden_dims=[256, 256], out_dim=1, activation=jax.nn.relu)(x))
     critic_params = critic.init(rng=critic_rng, x=jnp.zeros(
         envs.single_observation_space.shape))
     critic = jax.jit(critic.apply)
