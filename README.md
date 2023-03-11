@@ -15,9 +15,9 @@ So far, it has been a successful experience. I now know much more about JAX, I h
 A todo list (in no particular order):
 - [x]  Implement a simple actor critic method to serve as a baseline (nothing fancy)
 - [x]  (bit of a reach but) Implement PPO
-- [ ]  Use JAX to accelerate wherever possible (currently, experience collection is the bottleneck)
+- [x]  Use JAX to accelerate wherever possible (currently, experience collection is the bottleneck)
 - [ ]  Implement some more advanced neural networks (I eventually want to have recurrent policies)
-- [ ]  Implement proper logging with Tensorboard (I'm always lazy for logging)
+- [x]  Implement proper logging with Tensorboard (I'm always lazy for logging)
 - [ ]  Find some interesting envs and get some initial results on them (current candidates are MiniGrid and some robotic envs)
 - [ ]  Implement behavior guided policy gradient (BGPG) and evolutionary strategy (BGES) (the original plan)
 - [ ]  Extend BGPG with some of my own ideas
