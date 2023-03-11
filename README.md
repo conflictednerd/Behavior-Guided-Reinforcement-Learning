@@ -1,5 +1,7 @@
 # Behavior-Guided-Reinforcement-Learning
 
+{UPDATE: Some theory and explanation of algorithms can be found [in my blog](https://conflictednerd.github.io/blog/learning-to-score-behaviors/)}
+
 Some time ago I read the paper [Learning to Score Behaviors for Guided Policy Optimization](https://arxiv.org/abs/1906.04349) and I really liked it. Unfortunately, the [official repo](https://github.com/behaviorguidedRL/BGRL) contains only a demo and doesn't provide a clean implementation that can be used to run extensive experiments with.  
 I had some exciting ideas for possibly improving on the paper and adding some components to it. So, I decided to first implement the paper's methods myself and then continue from there.  
 As if this wasn't challenging enough, I decided to write the code using [JAX](https://github.com/google/jax) (which I knew very little about at the time).  
